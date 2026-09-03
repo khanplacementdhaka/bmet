@@ -1,16 +1,48 @@
 from flask import Flask, render_template_string
 import pandas as pd
+import requests
 import os
 
 app = Flask(__name__)
 
+# --- GitHub Repository Configuration ---
+GITHUB_USERNAME = "khanplacementdhaka"
+GITHUB_REPO = "bmet"
+BRANCH = "main"
+
+# GitHub API URL এবং Raw Base URL (Root Directory)
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}/contents"
+RAW_BASE_URL = f"https://raw.githubusercontent.com/{GITHUB_USERNAME}/{GITHUB_REPO}/{BRANCH}/"
+
 def format_val(val):
-    """খালি বা NaN ডাটা হ্যান্ডেল এবং তারিখ ফরম্যাট করার জন্য হেলপার ফাংশন"""
+    """খালি বা NaN ডাটা হ্যান্ডেল এবং তারিখ ফরম্যাট করার হেলপার ফাংশন"""
     if pd.isna(val) or str(val).strip().lower() in ['nan', 'none', 'nat', '']:
         return '-'
     if isinstance(val, pd.Timestamp):
         return val.strftime('%Y-%m-%d')
     return str(val).strip()
+
+def get_image_url_by_passport(passport_number):
+    """পাসপোর্ট নম্বর দিয়ে গিটহাব থেকে ছবি মেলাবার ফাংশন"""
+    if not passport_number or passport_number == '-':
+        return 'https://www.w3schools.com/howto/img_avatar.png'
+    
+    try:
+        # GitHub API দিয়ে রেপোজিটরির সব ফাইলের নাম স্ক্যান করা
+        response = requests.get(GITHUB_API_URL, timeout=5)
+        if response.status_code == 200:
+            files = response.json()
+            for file in files:
+                filename = file.get('name', '')
+                # যদি কোনো ফাইলের নামে পাসপোর্ট নম্বরটি থাকে (যেমন: A07504029.jpg)
+                if passport_number.lower() in filename.lower():
+                    return f"{RAW_BASE_URL}{filename}"
+    except Exception as e:
+        print(f"Error checking GitHub files: {e}")
+
+    # ছবি না পাওয়া গেলে ডিফল্ট ছবি
+    return 'https://www.w3schools.com/howto/img_avatar.png'
+
 
 @app.route('/verify/<full_id>')
 def verify(full_id):
@@ -37,7 +69,7 @@ def verify(full_id):
 
     row = user_data.iloc[0]
 
-    # duplicate column names handled automatically by pandas (.1, .2, .3)
+    # Map dataset values
     data = {
         'SL_NO': format_val(row.get('SL NO')),
         'NAME': format_val(row.get('NAME')),
@@ -91,18 +123,24 @@ def verify(full_id):
         'ADDRESS': format_val(row.get('Address')),
     }
 
-    # Logos and photo URL
+    # Logos
+    BMET_LOGO = "https://bmet.teletalk.com.bd/bmet_2023/images/bmet.png"
     BD_LOGO = "https://upload.wikimedia.org/wikipedia/commons/8/84/Government_Seal_of_Bangladesh.svg"
-    BMET_LOGO = "https://bmet.gov.bd/themes/responsive_npf/img/logo/bmet_logo.png"
-    USER_PHOTO = format_val(row.get('PHOTO_URL')) if 'PHOTO_URL' in df.columns else 'https://www.w3schools.com/howto/img_avatar.png'
+    
+    # পাসপোর্ট নম্বর দিয়ে সরাসরি গিটহাব থেকে ছবি সার্চ করে আনা
+    USER_PHOTO = get_image_url_by_passport(data['PASSPORT'])
 
     return render_template_string("""
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="bn">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Emigration Clearance Verification</title>
+        
+        <!-- Tab Name and Favicon Icon -->
+        <title>OEP RAIMS</title>
+        <link rel="icon" type="image/png" href="{{ bmet_logo }}">
+
         <style>
             * { box-sizing: border-box; }
             body {
@@ -120,6 +158,8 @@ def verify(full_id):
                 padding: 16px;
                 box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
             }
+            
+            /* Top Header: Left = BMET Logo, Right = BD Logo */
             .top-header {
                 display: flex;
                 align-items: center;
@@ -128,10 +168,10 @@ def verify(full_id):
                 padding-bottom: 10px;
                 border-bottom: 1px dashed #e2e8f0;
             }
-            .top-header img { width: 40px; height: 40px; object-fit: contain; }
-            .header-text { flex-grow: 1; padding: 0 8px; }
+            .top-header img { width: 42px; height: 42px; object-fit: contain; }
+            .header-text { flex-grow: 1; padding: 0 6px; }
             .gov-title { color: #22543d; font-weight: bold; font-size: 13px; line-height: 1.3; }
-            .sub-title { color: #c53030; font-size: 11px; margin-top: 2px; }
+            .sub-title { color: #c53030; font-weight: 600; font-size: 11px; margin-top: 2px; }
 
             .clearance-heading {
                 text-align: center;
@@ -140,19 +180,21 @@ def verify(full_id):
             .clearance-heading .bn { font-size: 13px; color: #4a5568; margin-bottom: 2px; }
             .clearance-heading .en { font-size: 17px; font-weight: bold; color: #1a202c; }
 
+            /* Circular Profile Picture */
             .profile-box { text-align: center; margin: 12px 0 16px; }
             .profile-img {
-                width: 95px;
-                height: 105px;
+                width: 110px;
+                height: 110px;
                 object-fit: cover;
-                border-radius: 6px;
-                border: 1px solid #cbd5e0;
+                border-radius: 50%;
+                border: 2px solid #22543d;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.15);
             }
             .user-name {
                 font-size: 15px;
                 font-weight: 700;
                 color: #2d3748;
-                margin-top: 6px;
+                margin-top: 8px;
             }
             .ec-detail { font-size: 12px; color: #718096; margin-top: 3px; }
 
@@ -199,12 +241,12 @@ def verify(full_id):
         <div class="card">
             <!-- Header Section -->
             <div class="top-header">
-                <img src="{{ bd_logo }}" alt="BD Seal">
+                <img src="{{ bmet_logo }}" alt="BMET Logo">
                 <div class="header-text">
                     <div class="gov-title">গণপ্রজাতন্ত্রী বাংলাদেশ সরকার</div>
-                    <div class="sub-title">প্রবাসী কল্যাণ ও বৈদেশিক কর্মসংস্থান মন্ত্রণালয়</div>
+                    <div class="sub-title">জনশক্তি কর্মসংস্থান ও প্রশিক্ষন ব্যুরো</div>
                 </div>
-                <img src="{{ bmet_logo }}" alt="BMET Logo">
+                <img src="{{ bd_logo }}" alt="BD Seal">
             </div>
 
             <!-- Main Heading -->
@@ -213,15 +255,18 @@ def verify(full_id):
                 <div class="en">Emigration Clearance</div>
             </div>
 
-            <!-- Profile Info -->
+            <!-- Circular Profile Box -->
             <div class="profile-box">
-                <img class="profile-img" src="{{ user_photo }}" alt="User Photo">
+                <img class="profile-img" 
+                     src="{{ user_photo }}" 
+                     onerror="this.onerror=null; this.src='https://www.w3schools.com/howto/img_avatar.png';" 
+                     alt="User Photo">
                 <div class="user-name">{{ data.NAME }}</div>
                 <div class="ec-detail"><b>EC No:</b> RS-I-2026-{{ data.CLEARANCE_ID }}</div>
                 <div class="ec-detail"><b>EC Date:</b> {{ data.DATE }}</div>
             </div>
 
-            <!-- Key Details -->
+            <!-- Table Sections -->
             <table class="info-table">
                 <tr><td class="label">Birth Date</td><td class="value">{{ data.BIRTH_DATE }}</td></tr>
                 <tr><td class="label">Blood Group</td><td class="value">{{ data.BLOOD_GROUP }}</td></tr>
@@ -240,8 +285,8 @@ def verify(full_id):
             <div class="section-header">
                 <span class="section-title">Recruiting Agency</span>
                 <div class="mini-logos">
-                    <img src="{{ bd_logo }}" alt="BD">
                     <img src="{{ bmet_logo }}" alt="BMET">
+                    <img src="{{ bd_logo }}" alt="BD">
                 </div>
             </div>
             <table class="info-table">
@@ -254,8 +299,8 @@ def verify(full_id):
             <div class="section-header">
                 <span class="section-title">BMET Registration</span>
                 <div class="mini-logos">
-                    <img src="{{ bd_logo }}" alt="BD">
                     <img src="{{ bmet_logo }}" alt="BMET">
+                    <img src="{{ bd_logo }}" alt="BD">
                 </div>
             </div>
             <table class="info-table">
@@ -270,8 +315,8 @@ def verify(full_id):
             <div class="section-header">
                 <span class="section-title">Passports</span>
                 <div class="mini-logos">
-                    <img src="{{ bd_logo }}" alt="BD">
                     <img src="{{ bmet_logo }}" alt="BMET">
+                    <img src="{{ bd_logo }}" alt="BD">
                 </div>
             </div>
             <table class="info-table">
@@ -283,8 +328,8 @@ def verify(full_id):
             <div class="section-header">
                 <span class="section-title">Permanent Address</span>
                 <div class="mini-logos">
-                    <img src="{{ bd_logo }}" alt="BD">
                     <img src="{{ bmet_logo }}" alt="BMET">
+                    <img src="{{ bd_logo }}" alt="BD">
                 </div>
             </div>
             <table class="info-table">
@@ -300,8 +345,8 @@ def verify(full_id):
             <div class="section-header">
                 <span class="section-title">Emergency Contact</span>
                 <div class="mini-logos">
-                    <img src="{{ bd_logo }}" alt="BD">
                     <img src="{{ bmet_logo }}" alt="BMET">
+                    <img src="{{ bd_logo }}" alt="BD">
                 </div>
             </div>
             <table class="info-table">
