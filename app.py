@@ -18,6 +18,11 @@ def format_val(val):
         return '-'
     if isinstance(val, pd.Timestamp):
         return val.strftime('%Y-%m-%d')
+
+    # শুধু এই fix: 4215410293.0 → 4215410293
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+
     return str(val).strip()
 
 def get_image_url_by_passport(passport_number):
