@@ -1,4 +1,3 @@
-```python
 from flask import Flask, render_template_string
 import pandas as pd
 import requests
@@ -6,76 +5,80 @@ import os
 
 app = Flask(__name__)
 
-# --- GitHub Repository Configuration ---
+# ==============================
+# GitHub Configuration
+# ==============================
 GITHUB_USERNAME = "khanplacementdhaka"
 GITHUB_REPO = "bmet"
 BRANCH = "main"
 
-GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}/contents"
-RAW_BASE_URL = f"https://raw.githubusercontent.com/{GITHUB_USERNAME}/{GITHUB_REPO}/{BRANCH}/"
+GITHUB_API_URL = (
+    f"https://api.github.com/repos/"
+    f"{GITHUB_USERNAME}/{GITHUB_REPO}/contents"
+)
+
+RAW_BASE_URL = (
+    f"https://raw.githubusercontent.com/"
+    f"{GITHUB_USERNAME}/{GITHUB_REPO}/{BRANCH}/"
+)
 
 
-# ============================================================
-# FORMAT EXCEL DATA
-# ============================================================
+# ==============================
+# Format Excel Values
+# ==============================
 def format_val(val):
-    """
-    Excel/Pandas থেকে আসা data সুন্দরভাবে format করে।
-    যেমন:
-    4215410293.0  → 4215410293
-    4215410293.50 → 4215410293.5
-    """
-
-    # Empty / NaN / None / NaT
-    if pd.isna(val) or str(val).strip().lower() in ['nan', 'none', 'nat', '']:
+    if pd.isna(val) or str(val).strip().lower() in [
+        'nan', 'none', 'nat', ''
+    ]:
         return '-'
 
     # Date
     if isinstance(val, pd.Timestamp):
         return val.strftime('%Y-%m-%d')
 
-    # Integer-type float
-    # যেমন 4215410293.0 → 4215410293
+    # Remove .0 from whole numbers
+    # Example: 4215410293.0 -> 4215410293
     if isinstance(val, float) and val.is_integer():
         return str(int(val))
 
     return str(val).strip()
 
 
-# ============================================================
-# FIND USER PHOTO FROM GITHUB
-# ============================================================
-def get_image_url_by_passport(passport_number):
-
-    if not passport_number or passport_number == '-':
-        return 'https://www.w3schools.com/howto/img_avatar.png'
-
+# ==============================
+# Find Photo by Passport Number
+# ==============================
+def get_image_url_by_passport(passport_no):
     try:
-        response = requests.get(GITHUB_API_URL, timeout=5)
+        response = requests.get(
+            GITHUB_API_URL,
+            timeout=10
+        )
 
-        if response.status_code == 200:
+        if response.status_code != 200:
+            return None
 
-            files = response.json()
+        files = response.json()
 
-            for file in files:
+        passport_no = str(passport_no).strip().upper()
 
-                filename = file.get('name', '')
+        for file in files:
+            if file.get("type") != "file":
+                continue
 
-                if (
-                    passport_number.lower() in filename.lower()
-                    and filename.lower() != 'bmet.png'
-                ):
-                    return f"{RAW_BASE_URL}{filename}"
+            filename = file.get("name", "").upper()
+
+            if passport_no in filename:
+                return RAW_BASE_URL + file["path"]
 
     except Exception as e:
-        print(f"Error checking GitHub files: {e}")
+        print("GitHub image error:", e)
 
-    return 'https://www.w3schools.com/howto/img_avatar.png'
+    return None
 
 
-# ============================================================
-# VERIFY ROUTE
-# ============================================================
+# ==============================
+# Verification Route
+# ==============================
 @app.route('/verify/<full_id>')
 def verify(full_id):
 
@@ -86,14 +89,15 @@ def verify(full_id):
     # Read Excel
     df = pd.read_excel("data.xlsx")
 
-    # Remove prefix from verification URL
-    clean_id = full_id.replace("RS-I-2026-", "").strip()
+    # Extract ID
+    clean_id = str(full_id).strip()
 
-    # Check required column
+    # ==============================
+    # Find CLEARANCE_ID
+    # ==============================
     if 'CLEARANCE_ID' not in df.columns:
-        return "CLEARANCE_ID column not found in Excel file.", 500
+        return "CLEARANCE_ID column not found in database.", 500
 
-    # Find matching record
     user_data = df[
         df['CLEARANCE_ID']
         .astype(str)
@@ -103,147 +107,113 @@ def verify(full_id):
     ]
 
     if user_data.empty:
-        return "Invalid Card or Record Not Found", 404
+        return """
+        <html>
+        <head>
+            <title>Verification Failed</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    text-align: center;
+                    padding: 50px;
+                }
+
+                .box {
+                    max-width: 500px;
+                    margin: auto;
+                    padding: 30px;
+                    border: 1px solid #ddd;
+                    border-radius: 10px;
+                }
+
+                h2 {
+                    color: red;
+                }
+            </style>
+        </head>
+
+        <body>
+            <div class="box">
+                <h2>Verification Failed</h2>
+                <p>No record found for this verification ID.</p>
+            </div>
+        </body>
+        </html>
+        """, 404
 
     # First matching row
     row = user_data.iloc[0]
 
+    # ==============================
+    # Get Data
+    # ==============================
+    ec_no = format_val(row.get('CLEARANCE_ID'))
+    ec_date = format_val(row.get('CLEARANCE_DATE'))
 
-    # ========================================================
-    # DATA
-    # ========================================================
-    data = {
+    name = format_val(row.get('NAME'))
+    birth_date = format_val(row.get('DATE_OF_BIRTH'))
+    blood_group = format_val(row.get('BLOOD_GROUP'))
 
-        'SL_NO': format_val(row.get('SL NO')),
+    passport_no = format_val(row.get('PASSPORT_NO'))
+    passport_issue = format_val(row.get('PASSPORT_ISSUE_DATE'))
+    passport_expire = format_val(row.get('PASSPORT_EXPIRY_DATE'))
 
-        'NAME': format_val(row.get('NAME')),
+    visa_no = format_val(row.get('VISA_NO'))
+    visa_issue = format_val(row.get('VISA_ISSUE_DATE'))
+    visa_expire = format_val(row.get('VISA_EXPIRY_DATE'))
 
-        'PASSPORT': format_val(row.get('PASSPORT')),
+    referral_no = format_val(row.get('REFERRAL_NO'))
 
-        'ISSUE_DATE': format_val(row.get('ISSUE_DATE')),
+    employer = format_val(row.get('EMPLOYER'))
+    country = format_val(row.get('COUNTRY'))
 
-        'FATHERS_NAME': format_val(row.get('FATHERS_NAME')),
-
-        'MOTHERS_NAME': format_val(row.get('MOTHERS_NAME')),
-
-        'BMET_ID': format_val(row.get('BMET_ID')),
-
-        'CLEARANCE_ID': format_val(row.get('CLEARANCE_ID')),
-
-        'DATE': format_val(row.get('DATE')),
-
-        'TIME': format_val(row.get('TIME')),
-
-        'BIRTH_DATE': format_val(row.get('Birth Date')),
-
-        'BLOOD_GROUP': format_val(row.get('Blood Group')),
-
-        'PASSPORT_ISSUE': format_val(row.get('Passport Issue Date')),
-
-        'PASSPORT_EXPIRE': format_val(row.get('Passport Expire Date')),
-
-        'VISA_NO': format_val(row.get('Visa No')),
-
-        'VISA_ISSUE': format_val(row.get('Visa Issue Date')),
-
-        'VISA_EXPIRE': format_val(row.get('Visa Expiry Date')),
-
-        'REFERRAL_NO': format_val(row.get('Referral No')),
-
-        'EMPLOYER': format_val(row.get('Employer')),
-
-        'COUNTRY': format_val(row.get('Country')),
-
-        'AGENCY_NAME': format_val(row.get('Name')),
-
-        'LICENSE_NO': format_val(row.get('License No')),
-
-        'AGENCY_PHONE': format_val(row.get('Phone')),
-
-        'BMET_NO': format_val(row.get('BMET No')),
-
-        'BMET_REG_NAME': format_val(row.get('Name.1')),
-
-        'BMET_BIRTH_DATE': format_val(row.get('Birth Date.1')),
-
-        'GENDER': format_val(row.get('Gender')),
-
-        'NID': format_val(row.get('NID')),
-
-        'PP_NAME': format_val(row.get('Name.2')),
-
-        'PASSPORT_NO_1': format_val(row.get('Passport No 1')),
-
-        'HOUSE_VILL': format_val(row.get('House/Vill/Road')),
-
-        'POST_OFFICE': format_val(row.get('Post Office')),
-
-        'POLICE_STATION': format_val(row.get('Police Station')),
-
-        'UPAZILA': format_val(row.get('Upazila')),
-
-        'DISTRICT': format_val(row.get('District')),
-
-        'DIVISION': format_val(row.get('Division')),
-
-        'EMERGENCY_NAME': format_val(row.get('Name.3')),
-
-        'RELATION': format_val(row.get('Relation')),
-
-        'MOBILE': format_val(row.get('Mobile')),
-
-        'ADDRESS': format_val(row.get('Address')),
-    }
-
-
-    # ========================================================
-    # LOGOS / PHOTO
-    # ========================================================
-
-    BMET_LOGO = f"{RAW_BASE_URL}bmet.png"
-
-    BD_LOGO = (
-        "https://upload.wikimedia.org/wikipedia/commons/"
-        "8/84/Government_Seal_of_Bangladesh.svg"
+    recruiting_agency = format_val(
+        row.get('RECRUITING_AGENCY')
     )
 
-    USER_PHOTO = get_image_url_by_passport(data['PASSPORT'])
+    bmet_registration = format_val(
+        row.get('BMET_REGISTRATION')
+    )
 
+    permanent_address = format_val(
+        row.get('PERMANENT_ADDRESS')
+    )
 
-    # ========================================================
+    emergency_contact = format_val(
+        row.get('EMERGENCY_CONTACT')
+    )
+
+    # ==============================
+    # Passport Photo
+    # ==============================
+    photo_url = get_image_url_by_passport(passport_no)
+
+    if not photo_url:
+        photo_url = (
+            "https://via.placeholder.com/180x220"
+            "?text=No+Photo"
+        )
+
+    # ==============================
     # HTML
-    # ========================================================
-
-    return render_template_string("""
+    # ==============================
+    html = """
     <!DOCTYPE html>
-
-    <html lang="bn">
+    <html lang="en">
 
     <head>
 
         <meta charset="UTF-8">
 
         <meta name="viewport"
-              content="width=device-width, initial-scale=1">
+              content="width=device-width, initial-scale=1.0">
 
         <title>OEP RAIMS</title>
 
-        <link rel="icon"
-              type="image/png"
-              href="{{ bmet_logo }}">
-
-
-        <!-- Google Fonts -->
-        <link rel="preconnect"
-              href="https://fonts.googleapis.com">
-
-        <link rel="preconnect"
-              href="https://fonts.gstatic.com"
-              crossorigin>
-
-        <link href="https://fonts.googleapis.com/css2?family=Tiro+Bangla&display=swap"
-              rel="stylesheet">
-
+        <link
+            href="https://fonts.googleapis.com/css2?family=Tiro+Bangla&display=swap"
+            rel="stylesheet"
+        >
 
         <style>
 
@@ -251,675 +221,390 @@ def verify(full_id):
                 box-sizing: border-box;
             }
 
-
             body {
-
-                font-family:
-                    'Times New Roman',
-                    Times,
-                    'Tiro Bangla',
-                    serif;
-
-                background-color: #f8fafc;
-
                 margin: 0;
-
-                padding: 10px 4px;
-
-                color: #111111;
+                padding: 0;
+                background: #f3f3f3;
+                font-family: 'Tiro Bangla', Arial, sans-serif;
+                color: #222;
             }
 
-
-            .card {
-
-                max-width: 410px;
-
-                margin: 0 auto;
-
-                background: #ffffff;
-
-                padding: 12px;
+            .container {
+                max-width: 1000px;
+                margin: 25px auto;
+                background: white;
+                padding: 25px;
+                box-shadow: 0 0 10px rgba(0,0,0,0.15);
             }
 
-
-            /* Top Header */
-
-            .top-header {
-
-                display: flex;
-
-                align-items: center;
-
-                justify-content: space-between;
-
+            .header {
                 text-align: center;
-
-                padding-bottom: 6px;
+                border-bottom: 3px solid #008000;
+                padding-bottom: 15px;
+                margin-bottom: 20px;
             }
 
-
-            .top-header img {
-
-                width: 38px;
-
-                height: 38px;
-
-                object-fit: contain;
-            }
-
-
-            .header-text {
-
-                flex-grow: 1;
-
-                padding: 0 4px;
-            }
-
-
-            .gov-title {
-
+            .header h1 {
+                margin: 0;
+                font-size: 28px;
                 color: #008000;
-
                 font-weight: bold;
-
-                font-size: 14px;
-
-                line-height: 1.2;
-
-                font-family:
-                    'Tiro Bangla',
-                    'Siyam Rupali',
-                    serif;
             }
 
-
-            .sub-title {
-
-                color: #ff00ff;
-
-                font-weight: bold;
-
-                font-size: 11px;
-
-                margin-top: 1px;
-
-                font-family:
-                    'Tiro Bangla',
-                    'Siyam Rupali',
-                    serif;
+            .header h2 {
+                margin: 5px 0;
+                color: #c000c0;
+                font-size: 20px;
             }
 
-
-            /* Clearance Heading */
-
-            .clearance-heading {
-
-                text-align: center;
-
-                margin: 10px 0 8px;
-            }
-
-
-            .clearance-heading .bn {
-
-                font-size: 13px;
-
-                color: #000000;
-
-                font-family:
-                    'Tiro Bangla',
-                    serif;
-
-                margin-bottom: 1px;
-            }
-
-
-            .clearance-heading .en {
-
-                font-size: 15px;
-
-                font-weight: bold;
-
-                color: #000000;
-            }
-
-
-            /* User Photo */
-
-            .profile-box {
-
-                text-align: center;
-
-                margin: 8px 0 12px;
-            }
-
-
-            .profile-img {
-
-                width: 105px;
-
-                height: 105px;
-
-                object-fit: cover;
-
-                border-radius: 50%;
-
-                border: 1px solid #ddd;
-            }
-
-
-            .user-name {
-
-                font-size: 15px;
-
-                font-weight: bold;
-
-                color: #000000;
-
-                margin-top: 6px;
-
-                letter-spacing: 0.5px;
-            }
-
-
-            .ec-detail {
-
-                font-size: 12px;
-
-                color: #333333;
-
-                margin-top: 2px;
-            }
-
-
-            /* Grid Table */
-
-            .info-table {
-
-                width: 100%;
-
-                border-collapse: collapse;
-
-                margin-bottom: 10px;
-
-                background: #fbfbfb;
-
-                border: 1px solid #e0e0e0;
-            }
-
-
-            .info-table tr {
-
-                border-bottom: 1px solid #eaeaea;
-            }
-
-
-            .info-table tr:last-child {
-
-                border-bottom: none;
-            }
-
-
-            .info-table td {
-
-                padding: 4px 8px;
-
-                font-size: 12px;
-
-                vertical-align: middle;
-            }
-
-
-            .info-table td.label {
-
-                color: #555555;
-
-                width: 45%;
-
-                font-weight: normal;
-            }
-
-
-            .info-table td.value {
-
-                color: #000000;
-
-                font-weight: bold;
-
-                width: 55%;
-
-                word-break: break-word;
-            }
-
-
-            /* Section Headers */
-
-            .section-header {
-
+            .profile-section {
                 display: flex;
-
-                align-items: center;
-
-                justify-content: space-between;
-
-                margin: 12px 0 4px;
+                gap: 25px;
+                margin-bottom: 20px;
+                align-items: flex-start;
             }
 
+            .photo {
+                width: 160px;
+                height: 190px;
+                object-fit: cover;
+                border: 1px solid #999;
+                padding: 3px;
+                background: white;
+            }
+
+            .profile-info {
+                flex: 1;
+            }
+
+            .profile-info table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+
+            .profile-info td {
+                padding: 8px;
+                border-bottom: 1px solid #ddd;
+            }
+
+            .profile-info td:first-child {
+                width: 180px;
+                font-weight: bold;
+            }
 
             .section-title {
-
-                font-size: 13.5px;
-
+                background: #008000;
+                color: white;
+                padding: 10px;
+                margin-top: 20px;
+                font-size: 18px;
                 font-weight: bold;
-
-                color: #008000;
             }
 
+            table.data-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 0;
+            }
 
-            .mini-logos img {
+            table.data-table th,
+            table.data-table td {
+                border: 1px solid #ccc;
+                padding: 9px;
+                text-align: left;
+            }
 
-                width: 18px;
+            table.data-table th {
+                background: #f0f0f0;
+                width: 25%;
+            }
 
-                height: 18px;
+            .government {
+                text-align: center;
+                margin-top: 30px;
+                padding-top: 20px;
+                border-top: 2px solid #008000;
+            }
 
-                margin-left: 1px;
+            .government img {
+                max-width: 100px;
+                max-height: 100px;
+            }
 
-                vertical-align: middle;
+            .verified {
+                text-align: center;
+                margin-top: 20px;
+                color: green;
+                font-size: 20px;
+                font-weight: bold;
+            }
+
+            @media (max-width: 700px) {
+
+                .container {
+                    margin: 0;
+                    padding: 15px;
+                }
+
+                .profile-section {
+                    flex-direction: column;
+                    align-items: center;
+                }
+
+                .profile-info {
+                    width: 100%;
+                }
+
+                .profile-info td:first-child {
+                    width: 130px;
+                }
+
+                table.data-table th,
+                table.data-table td {
+                    padding: 6px;
+                    font-size: 14px;
+                }
             }
 
         </style>
 
     </head>
 
-
     <body>
 
+        <div class="container">
 
-        <div class="card">
+            <div class="header">
 
+                <h1>
+                    Overseas Employment Platform
+                </h1>
 
-            <!-- Header -->
-
-            <div class="top-header">
-
-                <img src="{{ bmet_logo }}"
-                     alt="BMET Logo">
-
-
-                <div class="header-text">
-
-                    <div class="gov-title">
-                        গণপ্রজাতন্ত্রী বাংলাদেশ সরকার
-                    </div>
-
-                    <div class="sub-title">
-                        জনশক্তি কর্মসংস্থান ও প্রশিক্ষণ ব্যুরো
-                    </div>
-
-                </div>
-
-
-                <img src="{{ bd_logo }}"
-                     alt="BD Seal">
+                <h2>
+                    Recruitment Agency Information Management System
+                </h2>
 
             </div>
 
 
-            <!-- Clearance Heading -->
+            <div class="profile-section">
 
-            <div class="clearance-heading">
+                <img
+                    src="{{ photo_url }}"
+                    class="photo"
+                    alt="Profile Photo"
+                >
 
-                <div class="bn">
-                    বহির্গমন ছাড়পত্র
-                </div>
+                <div class="profile-info">
 
-                <div class="en">
-                    Emigration Clearance
-                </div>
+                    <table>
 
-            </div>
+                        <tr>
+                            <td>EC No</td>
+                            <td>{{ ec_no }}</td>
+                        </tr>
 
+                        <tr>
+                            <td>EC Date</td>
+                            <td>{{ ec_date }}</td>
+                        </tr>
 
-            <!-- Profile -->
+                        <tr>
+                            <td>Name</td>
+                            <td>{{ name }}</td>
+                        </tr>
 
-            <div class="profile-box">
+                    </table>
 
-                <img class="profile-img"
-                     src="{{ user_photo }}"
-                     onerror="this.onerror=null; this.src='https://www.w3schools.com/howto/img_avatar.png';"
-                     alt="User Photo">
-
-
-                <div class="user-name">
-                    {{ data.NAME }}
-                </div>
-
-
-                <div class="ec-detail">
-                    EC No: RS-I-2026-{{ data.CLEARANCE_ID }}
-                </div>
-
-
-                <div class="ec-detail">
-                    EC Date: {{ data.DATE }}
                 </div>
 
             </div>
 
 
-            <!-- Table 1 -->
+            <div class="section-title">
+                Personal Information
+            </div>
 
-            <table class="info-table">
+            <table class="data-table">
 
                 <tr>
-                    <td class="label">Birth Date</td>
-                    <td class="value">{{ data.BIRTH_DATE }}</td>
+                    <th>Birth Date</th>
+                    <td>{{ birth_date }}</td>
+
+                    <th>Blood Group</th>
+                    <td>{{ blood_group }}</td>
                 </tr>
 
                 <tr>
-                    <td class="label">Blood Group</td>
-                    <td class="value">{{ data.BLOOD_GROUP }}</td>
+                    <th>Passport No</th>
+                    <td>{{ passport_no }}</td>
+
+                    <th>Passport Issue Date</th>
+                    <td>{{ passport_issue }}</td>
                 </tr>
 
                 <tr>
-                    <td class="label">Passport No</td>
-                    <td class="value">{{ data.PASSPORT }}</td>
+                    <th>Passport Expire Date</th>
+                    <td>{{ passport_expire }}</td>
+
+                    <th>Visa No</th>
+                    <td>{{ visa_no }}</td>
                 </tr>
 
                 <tr>
-                    <td class="label">Passport Issue Date</td>
-                    <td class="value">{{ data.PASSPORT_ISSUE }}</td>
+                    <th>Visa Issue Date</th>
+                    <td>{{ visa_issue }}</td>
+
+                    <th>Visa Expire Date</th>
+                    <td>{{ visa_expire }}</td>
                 </tr>
 
                 <tr>
-                    <td class="label">Passport Expire Date</td>
-                    <td class="value">{{ data.PASSPORT_EXPIRE }}</td>
+                    <th>Referral No</th>
+                    <td>{{ referral_no }}</td>
+
+                    <th>Country</th>
+                    <td>{{ country }}</td>
                 </tr>
 
                 <tr>
-                    <td class="label">Visa No</td>
-                    <td class="value">{{ data.VISA_NO }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Visa Issue Date</td>
-                    <td class="value">{{ data.VISA_ISSUE }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Visa Expire Date</td>
-                    <td class="value">{{ data.VISA_EXPIRE }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Referral No</td>
-                    <td class="value">{{ data.REFERRAL_NO }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Employer</td>
-                    <td class="value">{{ data.EMPLOYER }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Country</td>
-                    <td class="value">{{ data.COUNTRY }}</td>
+                    <th>Employer</th>
+                    <td colspan="3">{{ employer }}</td>
                 </tr>
 
             </table>
 
 
-            <!-- Section 1 -->
-
-            <div class="section-header">
-
-                <span class="section-title">
-                    Recruiting Agency
-                </span>
-
-                <div class="mini-logos">
-
-                    <img src="{{ bd_logo }}"
-                         alt="BD Seal">
-
-                    <img src="{{ bmet_logo }}"
-                         alt="BMET Logo">
-
-                </div>
-
+            <div class="section-title">
+                Recruiting Agency
             </div>
 
-
-            <table class="info-table">
+            <table class="data-table">
 
                 <tr>
-                    <td class="label">Name</td>
-                    <td class="value">{{ data.AGENCY_NAME }}</td>
+                    <th>Recruiting Agency</th>
+                    <td>{{ recruiting_agency }}</td>
                 </tr>
 
                 <tr>
-                    <td class="label">License No</td>
-                    <td class="value">{{ data.LICENSE_NO }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Phone</td>
-                    <td class="value">{{ data.AGENCY_PHONE }}</td>
+                    <th>BMET Registration</th>
+                    <td>{{ bmet_registration }}</td>
                 </tr>
 
             </table>
 
 
-            <!-- Section 2 -->
-
-            <div class="section-header">
-
-                <span class="section-title">
-                    BMET Registration
-                </span>
-
-                <div class="mini-logos">
-
-                    <img src="{{ bd_logo }}"
-                         alt="BD Seal">
-
-                    <img src="{{ bmet_logo }}"
-                         alt="BMET Logo">
-
-                </div>
-
+            <div class="section-title">
+                Passport Information
             </div>
 
-
-            <table class="info-table">
+            <table class="data-table">
 
                 <tr>
-                    <td class="label">BMET No</td>
-                    <td class="value">{{ data.BMET_NO }}</td>
+                    <th>Passport No</th>
+                    <td>{{ passport_no }}</td>
                 </tr>
 
                 <tr>
-                    <td class="label">Name</td>
-                    <td class="value">{{ data.BMET_REG_NAME }}</td>
+                    <th>Issue Date</th>
+                    <td>{{ passport_issue }}</td>
                 </tr>
 
                 <tr>
-                    <td class="label">Birth Date</td>
-                    <td class="value">{{ data.BMET_BIRTH_DATE }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Gender</td>
-                    <td class="value">{{ data.GENDER }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">NID</td>
-                    <td class="value">{{ data.NID }}</td>
+                    <th>Expiry Date</th>
+                    <td>{{ passport_expire }}</td>
                 </tr>
 
             </table>
 
 
-            <!-- Section 3 -->
-
-            <div class="section-header">
-
-                <span class="section-title">
-                    Passports
-                </span>
-
-                <div class="mini-logos">
-
-                    <img src="{{ bd_logo }}"
-                         alt="BD Seal">
-
-                    <img src="{{ bmet_logo }}"
-                         alt="BMET Logo">
-
-                </div>
-
+            <div class="section-title">
+                Permanent Address
             </div>
 
-
-            <table class="info-table">
-
-                <tr>
-                    <td class="label">Name</td>
-                    <td class="value">{{ data.PP_NAME }}</td>
-                </tr>
+            <table class="data-table">
 
                 <tr>
-                    <td class="label">Passport No 1</td>
-                    <td class="value">{{ data.PASSPORT_NO_1 }}</td>
+                    <th>Address</th>
+                    <td>{{ permanent_address }}</td>
                 </tr>
 
             </table>
 
 
-            <!-- Section 4 -->
-
-            <div class="section-header">
-
-                <span class="section-title">
-                    Permanent Address
-                </span>
-
-                <div class="mini-logos">
-
-                    <img src="{{ bd_logo }}"
-                         alt="BD Seal">
-
-                    <img src="{{ bmet_logo }}"
-                         alt="BMET Logo">
-
-                </div>
-
+            <div class="section-title">
+                Emergency Contact
             </div>
 
-
-            <table class="info-table">
-
-                <tr>
-                    <td class="label">House/Vill/Road</td>
-                    <td class="value">{{ data.HOUSE_VILL }}</td>
-                </tr>
+            <table class="data-table">
 
                 <tr>
-                    <td class="label">Post Office</td>
-                    <td class="value">{{ data.POST_OFFICE }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Police Station</td>
-                    <td class="value">{{ data.POLICE_STATION }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Upazila</td>
-                    <td class="value">{{ data.UPAZILA }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">District</td>
-                    <td class="value">{{ data.DISTRICT }}</td>
-                </tr>
-
-                <tr>
-                    <td class="label">Division</td>
-                    <td class="value">{{ data.DIVISION }}</td>
+                    <th>Emergency Contact</th>
+                    <td>{{ emergency_contact }}</td>
                 </tr>
 
             </table>
 
 
-            <!-- Section 5 -->
-
-            <div class="section-header">
-
-                <span class="section-title">
-                    Emergency Contact
-                </span>
-
-                <div class="mini-logos">
-
-                    <img src="{{ bd_logo }}"
-                         alt="BD Seal">
-
-                    <img src="{{ bmet_logo }}"
-                         alt="BMET Logo">
-
-                </div>
-
+            <div class="verified">
+                ✓ Information Successfully Verified
             </div>
 
 
-            <table class="info-table">
+            <div class="government">
 
-                <tr>
-                    <td class="label">Name</td>
-                    <td class="value">{{ data.EMERGENCY_NAME }}</td>
-                </tr>
+                <img
+                    src="https://raw.githubusercontent.com/khanplacementdhaka/bmet/main/bmet_logo.png"
+                    alt="BMET Logo"
+                >
 
-                <tr>
-                    <td class="label">Relation</td>
-                    <td class="value">{{ data.RELATION }}</td>
-                </tr>
+                <p>
+                    Bureau of Manpower, Employment and Training (BMET)
+                </p>
 
-                <tr>
-                    <td class="label">Mobile</td>
-                    <td class="value">{{ data.MOBILE }}</td>
-                </tr>
+                <img
+                    src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/f9/Seal_of_Bangladesh.svg/200px-Seal_of_Bangladesh.svg.png"
+                    alt="Bangladesh Government Seal"
+                >
 
-                <tr>
-                    <td class="label">Address</td>
-                    <td class="value">{{ data.ADDRESS }}</td>
-                </tr>
-
-            </table>
-
+            </div>
 
         </div>
 
     </body>
 
     </html>
+    """
 
-    """,
-    data=data,
-    bd_logo=BD_LOGO,
-    bmet_logo=BMET_LOGO,
-    user_photo=USER_PHOTO)
+    return render_template_string(
+        html,
+        photo_url=photo_url,
+        ec_no=ec_no,
+        ec_date=ec_date,
+        name=name,
+        birth_date=birth_date,
+        blood_group=blood_group,
+        passport_no=passport_no,
+        passport_issue=passport_issue,
+        passport_expire=passport_expire,
+        visa_no=visa_no,
+        visa_issue=visa_issue,
+        visa_expire=visa_expire,
+        referral_no=referral_no,
+        employer=employer,
+        country=country,
+        recruiting_agency=recruiting_agency,
+        bmet_registration=bmet_registration,
+        permanent_address=permanent_address,
+        emergency_contact=emergency_contact
+    )
 
 
-# ============================================================
-# RUN SERVER
-# ============================================================
-
-if __name__ == "__main__":
-
+# ==============================
+# Run Application
+# ==============================
+if __name__ == '__main__':
     app.run(
         host='0.0.0.0',
         port=5000
     )
-```
