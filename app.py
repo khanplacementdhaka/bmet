@@ -2,8 +2,129 @@ from flask import Flask, render_template_string
 import pandas as pd
 import requests
 import os
+import sqlite3
+from datetime import datetime
+from flask import request, redirect, url_for
 
 app = Flask(__name__)
+
+
+# --- Visitor Tracking Configuration ---
+TRACKING_DB = os.environ.get("TRACKING_DB", "visitors.db")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-this-password")
+
+
+def init_tracking_db():
+    """Create the visitor-tracking database if it does not already exist."""
+    conn = sqlite3.connect(TRACKING_DB)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS visits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            visited_at TEXT NOT NULL,
+            verification_id TEXT NOT NULL,
+            ip_address TEXT,
+            user_agent TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def track_visit(verification_id):
+    """Record a successful verification-page visit."""
+    try:
+        # Prefer the first IP from X-Forwarded-For when behind Render/proxy.
+        forwarded_for = request.headers.get("X-Forwarded-For", "")
+        ip_address = (
+            forwarded_for.split(",")[0].strip()
+            if forwarded_for
+            else request.remote_addr
+        )
+
+        user_agent = request.headers.get("User-Agent", "")[:500]
+
+        conn = sqlite3.connect(TRACKING_DB)
+        conn.execute(
+            """
+            INSERT INTO visits
+            (visited_at, verification_id, ip_address, user_agent)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                verification_id,
+                ip_address,
+                user_agent,
+            ),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        # Tracking failure must never break the verification page.
+        print(f"Visitor tracking error: {e}")
+
+
+def get_tracking_stats():
+    """Return dashboard statistics and recent visits."""
+    conn = sqlite3.connect(TRACKING_DB)
+    conn.row_factory = sqlite3.Row
+
+    total = conn.execute(
+        "SELECT COUNT(*) FROM visits"
+    ).fetchone()[0]
+
+    today = conn.execute(
+        """
+        SELECT COUNT(*) FROM visits
+        WHERE date(visited_at) = date('now', 'localtime')
+        """
+    ).fetchone()[0]
+
+    yesterday = conn.execute(
+        """
+        SELECT COUNT(*) FROM visits
+        WHERE date(visited_at) = date('now', 'localtime', '-1 day')
+        """
+    ).fetchone()[0]
+
+    last_7_days = conn.execute(
+        """
+        SELECT COUNT(*) FROM visits
+        WHERE datetime(visited_at) >= datetime('now', 'localtime', '-6 days')
+        """
+    ).fetchone()[0]
+
+    id_counts = conn.execute(
+        """
+        SELECT verification_id, COUNT(*) AS visits
+        FROM visits
+        GROUP BY verification_id
+        ORDER BY visits DESC, verification_id ASC
+        """
+    ).fetchall()
+
+    recent = conn.execute(
+        """
+        SELECT visited_at, verification_id, ip_address, user_agent
+        FROM visits
+        ORDER BY id DESC
+        LIMIT 100
+        """
+    ).fetchall()
+
+    conn.close()
+
+    return {
+        "total": total,
+        "today": today,
+        "yesterday": yesterday,
+        "last_7_days": last_7_days,
+        "id_counts": id_counts,
+        "recent": recent,
+    }
+
+
+init_tracking_db()
 
 # --- GitHub Repository Configuration ---
 GITHUB_USERNAME = "khanplacementdhaka"
@@ -43,6 +164,160 @@ def get_image_url_by_passport(passport_number):
     return 'https://www.w3schools.com/howto/img_avatar.png'
 
 
+
+@app.route('/admin', methods=['GET', 'POST'])
+def admin():
+    """Simple password-protected visitor tracking dashboard."""
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        if password != ADMIN_PASSWORD:
+            return render_template_string(ADMIN_LOGIN_TEMPLATE, error="Incorrect password."), 401
+        return redirect(url_for('admin', auth='1'))
+
+    if request.args.get('auth') != '1':
+        return render_template_string(ADMIN_LOGIN_TEMPLATE, error=None)
+
+    stats = get_tracking_stats()
+    return render_template_string(
+        ADMIN_DASHBOARD_TEMPLATE,
+        **stats
+    )
+
+
+@app.route('/admin/clear', methods=['POST'])
+def clear_tracking():
+    """Delete all tracking records after password verification."""
+    password = request.form.get('password', '')
+    if password != ADMIN_PASSWORD:
+        return "Unauthorized", 401
+
+    conn = sqlite3.connect(TRACKING_DB)
+    conn.execute("DELETE FROM visits")
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for('admin', auth='1'))
+
+
+ADMIN_LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visitor Tracking Login</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;padding:40px 15px}
+.box{max-width:400px;margin:60px auto;background:#fff;padding:28px;border-radius:12px;
+box-shadow:0 4px 20px rgba(0,0,0,.08)}
+h2{text-align:center;margin-top:0}
+input{width:100%;padding:12px;box-sizing:border-box;margin:10px 0;border:1px solid #ccc;border-radius:7px}
+button{width:100%;padding:12px;border:0;border-radius:7px;background:#087f23;color:#fff;font-weight:bold;cursor:pointer}
+.error{color:#c00;text-align:center;margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="box">
+<h2>Visitor Tracking</h2>
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+<form method="post">
+<input type="password" name="password" placeholder="Admin Password" required>
+<button type="submit">Login</button>
+</form>
+</div>
+</body>
+</html>
+"""
+
+
+ADMIN_DASHBOARD_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visitor Tracking Dashboard</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#f4f7fb;margin:0;color:#111}
+.container{max-width:1200px;margin:0 auto;padding:20px}
+h1{margin:0 0 20px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:25px}
+.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 12px rgba(0,0,0,.07)}
+.card .number{font-size:30px;font-weight:bold;margin-top:8px}
+.card .label{color:#666}
+.section{background:#fff;border-radius:12px;padding:20px;margin-bottom:20px;
+box-shadow:0 2px 12px rgba(0,0,0,.07)}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;font-size:13px}
+th{background:#f8fafc}
+.scroll{overflow-x:auto}
+.danger{background:#c62828;color:#fff;border:0;border-radius:7px;padding:10px 14px;cursor:pointer}
+@media(max-width:800px){.cards{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:500px){.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Visitor Tracking Dashboard</h1>
+
+<div class="cards">
+<div class="card"><div class="label">Total Visitors</div><div class="number">{{ total }}</div></div>
+<div class="card"><div class="label">Today</div><div class="number">{{ today }}</div></div>
+<div class="card"><div class="label">Yesterday</div><div class="number">{{ yesterday }}</div></div>
+<div class="card"><div class="label">Last 7 Days</div><div class="number">{{ last_7_days }}</div></div>
+</div>
+
+<div class="section">
+<h2>Verification ID Visits</h2>
+<div class="scroll">
+<table>
+<tr><th>Verification ID</th><th>Visits</th></tr>
+{% for item in id_counts %}
+<tr><td>{{ item['verification_id'] }}</td><td>{{ item['visits'] }}</td></tr>
+{% else %}
+<tr><td colspan="2">No visits yet.</td></tr>
+{% endfor %}
+</table>
+</div>
+</div>
+
+<div class="section">
+<h2>Recent Visits (Last 100)</h2>
+<div class="scroll">
+<table>
+<tr><th>Date & Time</th><th>Verification ID</th><th>IP</th><th>Browser / Device</th></tr>
+{% for item in recent %}
+<tr>
+<td>{{ item['visited_at'] }}</td>
+<td>{{ item['verification_id'] }}</td>
+<td>{{ item['ip_address'] or '-' }}</td>
+<td>{{ item['user_agent'] or '-' }}</td>
+</tr>
+{% else %}
+<tr><td colspan="4">No visits yet.</td></tr>
+{% endfor %}
+</table>
+</div>
+</div>
+
+<div class="section">
+<h2>Danger Zone</h2>
+<form method="post" action="/admin/clear" onsubmit="return confirm('Delete ALL visitor tracking data?');">
+<input type="hidden" name="password" value="{{ request.args.get('auth') == '1' and '' or '' }}">
+<p style="color:#666">To clear tracking data, use the same admin password below.</p>
+<input type="password" name="password" placeholder="Admin Password" required
+style="padding:10px;width:260px;border:1px solid #ccc;border-radius:6px">
+<button class="danger" type="submit">Clear All Tracking Data</button>
+</form>
+</div>
+
+</div>
+</body>
+</html>
+"""
+
+
 @app.route('/verify/<full_id>')
 def verify(full_id):
 
@@ -61,6 +336,9 @@ def verify(full_id):
         return "Invalid Card or Record Not Found", 404
 
     row = user_data.iloc[0]
+
+    # Count this successful verification-page visit.
+    track_visit(full_id)
 
     data = {
         'SL_NO': format_val(row.get('SL NO')),
